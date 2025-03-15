@@ -23,16 +23,21 @@ class PowershellGenerator(BaseGenerator):
             String containing the PowerShell completion script
         """
         project_path = os.path.abspath(project_path)
-
+        # TODO: Merge project paths and allow multiple projects in a single file
         script = f"""
     # Django Command Completion for PowerShell
-    # Generated for project: {project_path}
+    # Generated for projects: {project_path}
+
+    # Setting tab complete functionality:
+	Set-PSReadlineKeyHandler -Key Tab -Function MenuComplete
 
     # Store project path and command information in global variables
-    $Global:DjangoProjectPath = '{project_path}'
+    $Global:DjangoProjectPaths = @('{project_path}')
     $Global:DjangoCommandInfo = @{{
     """
-
+        # TODO: Refactor to allow generator arguments to be provided in the same order regardless of the order of the generator?
+        # TODO: Add the project as a higher key so that it can be used to determine the project path when completing commands
+        # TODO: Deduplicate commands available in multiple projects?
         # Add commands and their arguments to the global variable (already sorted from discover_commands)
         for cmd_name, cmd_info in commands.items():
             script += f"    '{cmd_name}' = @{{\n"
@@ -41,11 +46,14 @@ class PowershellGenerator(BaseGenerator):
             script += "        'arguments' = @{\n"
 
             # Sort arguments alphabetically
-            sorted_args = sorted(cmd_info["arguments"].items(), key=lambda x: x[0])
-            for arg_name, arg_info in sorted_args:
+            for arg_name, arg_info in cmd_info["arguments"].items():
+                help_text = (
+                    arg_info["help"].replace("'", "''") if arg_info["help"] else ""
+                )
                 flags = "', '".join(sorted(arg_info["flags"]))
                 script += f"            '{arg_name}' = @{{\n"
                 script += f"                'flags' = @('{flags}')\n"
+                script += f"                'help' = '{help_text}'\n"
                 if arg_info["choices"]:
                     choices = "', '".join(str(c) for c in sorted(arg_info["choices"]))
                     script += f"                'choices' = @('{choices}')\n"
@@ -59,11 +67,20 @@ class PowershellGenerator(BaseGenerator):
 
     # Function to check if we're in the Django project directory
     function Test-DjangoProjectPath {
-        $currentPath = (Get-Location).Path
-        $projectPath = $Global:DjangoProjectPath
+        return Get-CurrentDjangoProjectPath -eq $null
+    }
 
-        # Check if we're in the project path or a subdirectory
-        return $currentPath.StartsWith($projectPath)
+    # Function to get the current project path
+    function Get-CurrentDjangoProjectPath {
+        $currentPath = (Get-Location).Path
+
+        # Find which project path we're in
+        foreach ($projectPath in $Global:DjangoProjectPaths) {
+            if ($currentPath.StartsWith($projectPath)) {
+                return $projectPath
+            }
+        }
+        return $null
     }
 
     # Function to find manage.py
@@ -94,39 +111,8 @@ class PowershellGenerator(BaseGenerator):
         return $null
     }
 
-    # Find and store manage.py path
-    $Global:DjangoManagePyPath = Find-ManagePy
-
-    # Create the dj function
-    function global:dj {
-        param([Parameter(ValueFromRemainingArguments=$true)]$args)
-
-        # Only run when in project directory
-        if (-not (Test-DjangoProjectPath)) {
-            # Pass through to regular python manage.py if not in project directory
-            python manage.py $args
-            return
-        }
-
-        # Verify the path exists
-        if (-not (Test-Path $Global:DjangoManagePyPath)) {
-            # Fall back to regular python manage.py if manage.py not found
-            python manage.py $args
-            return
-        }
-
-        $managePyDir = Split-Path -Parent $Global:DjangoManagePyPath
-        if ($managePyDir) { Push-Location $managePyDir }
-        try {
-            python $Global:DjangoManagePyPath $args
-        }
-        finally {
-            if ($managePyDir) { Pop-Location }
-        }
-    }
-
     # Register the argument completer
-    Register-ArgumentCompleter -CommandName dj -ScriptBlock {
+    Register-ArgumentCompleter -CommandName @("dj","Invoke-DjangoManage") -ScriptBlock {
         param($wordToComplete, $commandAst, $cursorPosition)
 
         # Only provide completions when in the correct project directory
@@ -148,37 +134,51 @@ class PowershellGenerator(BaseGenerator):
             }
         }
 
-        # If we're completing a subcommand
+        # If we're completing arguments for a command
         elseif ($commandAst.CommandElements.Count -ge 2) {
             $cmd = $commandAst.CommandElements[1].Extent.Text
-
             if ($Global:DjangoCommandInfo.ContainsKey($cmd)) {
                 $cmdInfo = $Global:DjangoCommandInfo[$cmd]
-
-                # Check if the word starts with "--" or "-", then suggest option arguments
-                if ($wordToComplete.StartsWith("--") -or $wordToComplete.StartsWith("-")) {
+                # If word starts with -, --, or is empty, show available flags
+                if ($wordToComplete.Length -eq 0 -or $wordToComplete.StartsWith("--") -or $wordToComplete.StartsWith("-")) {
                     $optionToComplete = $wordToComplete.TrimStart('-')
-
-                    return $cmdInfo.arguments.Keys | Sort-Object | ForEach-Object {
-                        $argInfo = $cmdInfo.arguments[$_]
-                        foreach ($flag in ($argInfo.flags | Sort-Object)) {
-                            if ($flag.TrimStart('-') -like "$optionToComplete*") {
-                                [System.Management.Automation.CompletionResult]::new(
-                                    $flag,
-                                    $flag,
-                                    'ParameterValue',
-                                    $argInfo.help
-                                )
-                            }
-                        }
-                    }
+                    
+					# Get all available flags and their help text
+					return $cmdInfo.arguments.GetEnumerator() | 
+						ForEach-Object { 
+							$argInfo = $_.Value
+							$help = if ($argInfo.help) { $argInfo.help } else { "No help available" }
+							if ($argInfo.flags.Count -eq 1 -and $argInfo.flags[0] -eq '') {
+								# Handle positional arguments (empty flags)
+								[System.Management.Automation.CompletionResult]::new(
+									$_.Key,
+									$_.Key,
+									'ParameterValue',
+									$help
+								)
+							} else {
+								# Handle flag arguments
+								$argInfo.flags | ForEach-Object {
+									[System.Management.Automation.CompletionResult]::new(
+										$_,
+										$_,
+										'ParameterValue',
+										$help
+									)
+								}
+							}
+						} |
+						Where-Object { $_.CompletionText.TrimStart('-') -like "$optionToComplete*" }
                 }
-                # If the previous word was an argument that has choices, complete those
+                # If previous word was a flag with choices, show available choices
                 elseif ($commandAst.CommandElements.Count -gt 2) {
                     $prevArg = $commandAst.CommandElements[-2].Extent.Text
-                    foreach ($argInfo in ($cmdInfo.arguments.Values | Sort-Object -Property {$_.flags[0]})) {
+                    foreach ($argName in $cmdInfo.arguments.Keys) {
+                        $argInfo = $cmdInfo.arguments[$argName]
                         if ($prevArg -in $argInfo.flags -and $argInfo.choices) {
-                            return $argInfo.choices | Sort-Object | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                            return $argInfo.choices | Sort-Object | Where-Object { 
+                                $_ -like "$wordToComplete*" 
+                            } | ForEach-Object {
                                 [System.Management.Automation.CompletionResult]::new(
                                     $_,
                                     $_,
@@ -192,13 +192,22 @@ class PowershellGenerator(BaseGenerator):
             }
         }
     }
+	# Create the Invoke-DjangoManage function that we'll alias with dj
+    function Invoke-DjangoManage {
+        param([Parameter(ValueFromRemainingArguments=$true)]$args)
 
-    # Create the dj alias only if in project directory
-    if (Test-DjangoProjectPath) {
-        Set-Alias -Name dj -Value "python manage.py" -ErrorAction SilentlyContinue
-        Write-Host "Django command completion registered for project: $Global:DjangoProjectPath" -ForegroundColor Green
-        Write-Host "Use 'dj <command>' to run commands when in the project directory." -ForegroundColor Green
+		if (-not (Test-DjangoProjectPath)){
+			Write-Host "Not in a generated directory: $Global:DjangoProjectPaths"
+			return
+		}
+		# TODO: Automatically activate virtual environment
+		python (Find-ManagePy) $args
     }
+
+    # Create the dj alias for Invoke-DjangoManage
+    Set-Alias -Name dj -Value Invoke-DjangoManage -ErrorAction SilentlyContinue
+    Write-Host "Django command completion registered for projects: $Global:DjangoProjectPaths" -ForegroundColor Green
+    Write-Host "Use 'dj <command>' to run commands when in the project directory." -ForegroundColor Green
     """
 
         return script

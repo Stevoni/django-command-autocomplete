@@ -128,8 +128,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
 2. Download source
-3. Run `uv sync --all-groups` 
-4. Run `uv run pre-commit install`
+3. Run `uv sync --all-groups` to include the dev and test requirements
+4. Run `uv run pre-commit install` to install the pre-commit hooks
+5. Run 'uv venv venv' to create the virtual environment
 
 
 ## License
