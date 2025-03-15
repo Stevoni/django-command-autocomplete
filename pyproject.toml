@@ -1,6 +1,6 @@
 [project]
 name = "django-command-autocomplete"
-version = "0.1.2"
+version = "0.1.5"
 description = "Terminal tab completion for Django management commands"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -30,5 +30,6 @@ dev = [
 ]
 test = [
     "pytest>=7.0",
+    "pytest-cov>=5.0.0",
     "pytest-django>=4.5",
 ]

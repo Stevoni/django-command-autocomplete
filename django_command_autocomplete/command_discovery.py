@@ -18,7 +18,8 @@ def discover_commands() -> Dict[str, Dict]:
             import django
 
             django.setup()
-        except Exception:
+        except Exception as e:
+            print(e)
             return {}
 
     commands = {}
