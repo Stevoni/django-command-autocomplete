@@ -12,12 +12,12 @@ class Command(BaseCommand):
         parser.add_argument(
             "shell",
             choices=BaseGenerator.get_all_command_flags(),
-            help="Shell to generate completion script for (powershell or bash)",
+            help="Shell to generate completion script for",
         )
         parser.add_argument(
             "--output",
             "-o",
-            help="Output file path for the shell script (defaults to django_completion.ps1 for PowerShell or django_completion.sh for Bash)",
+            help="Output file path for the shell script",
         )
 
     def handle(self, *args, **options):
