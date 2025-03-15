@@ -16,8 +16,7 @@ Shell tab completion for Django management commands. This package generates the 
 - Supports:
   - [x] PowerShell 
   - [ ] Bash (untested)
-- Validate contributors setup
-- Review and remove unnecessary requirements
+- Review and remove unnecessary requirements 
 
 ## Installation
 
@@ -129,7 +128,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
 2. Download source
-3. Run `uv sync` 
+3. Run `uv sync --all-groups` 
 4. Run `uv run pre-commit install`
 
 

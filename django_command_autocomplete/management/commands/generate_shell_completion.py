@@ -1,19 +1,17 @@
-from typing import Literal
+import os
 from django.core.management.base import BaseCommand
-from ...command_discovery import (
-    generate_powershell_completion,
-    generate_bash_completion,
-)
+
+from django_command_autocomplete.command_discovery import discover_commands
+from django_command_autocomplete.generators.base import BaseGenerator
 
 
 class Command(BaseCommand):
     help = "Generate shell completion script for Django management commands"
 
     def add_arguments(self, parser):
-        # TODO: Switch choices to use the dictionary of functions with keys of shell type
         parser.add_argument(
             "shell",
-            choices=["powershell", "bash"],
+            choices=BaseGenerator.get_all_command_flags(),
             help="Shell to generate completion script for (powershell or bash)",
         )
         parser.add_argument(
@@ -23,28 +21,30 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        # TODO: Switch to a dictionary of functions with keys of shell type
-        shell: Literal["powershell", "bash"] = options["shell"]
-        output_file = options["output"]
+        shell: str = options["shell"]
+        output_file: str = options["output"]
 
-        if shell == "powershell":
-            script = generate_powershell_completion()
-            default_output = "django_completion.ps1"
-            source_cmd = ". .\\{}"
-        else:  # bash
-            script = generate_bash_completion()
-            default_output = "django_completion.sh"
-            source_cmd = "source ./{}"
+        generator: BaseGenerator = BaseGenerator.get_generator_by_flag(shell)
 
-        output_file = output_file or default_output
+        if not generator:
+            error_message = "Unable to find generator for shell {}".format(shell)
+            self.style.ERROR(error_message)
+            raise ValueError(error_message)
 
-        with open(output_file, "w") as f:
-            f.write(script)
+        try:
+            commands = discover_commands()
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"{shell.title()} completion script generated at {output_file}\n"
-                "To use it, run the following command:\n"
-                f"{source_cmd.format(output_file)}"
+            script = generator.generate_output(
+                commands=commands, project_path=os.getcwd()
             )
-        )
+            output_file = output_file or generator.get_default_output_path()
+
+            with open(output_file, "w") as f:
+                f.write(script)
+
+            self.stdout.write(
+                self.style.SUCCESS(generator.generate_helptext(output_file))
+            )
+
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(str(e)))
